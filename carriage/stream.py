@@ -5,6 +5,8 @@ import heapq
 import itertools as itt
 import reprlib
 from collections import Counter, defaultdict, deque
+import multiprocessing as mp
+import os
 
 from tabulate import tabulate, tabulate_formats
 
@@ -1337,3 +1339,41 @@ class Stream(Monad):
         elems_str = elem_sep.join(elem_format.format(index=idx, elem=elem)
                                   for idx, elem in enumerate(self))
         return start + elems_str + end
+
+    def pmap(self, f, *, processes=None, chunk_size=1024):
+        '''Parallel map of streaming data
+
+        Parameters
+        ----------
+        f : callable
+            A *picklable* callable object (lambda is not allowed)
+        processes : int
+            the number of workers. If None is given, default to number
+            of machine cores
+        chunk_size : int
+            size of data chunks. The data will be chunked to the size given
+            before feeding to workers
+
+        Returns
+        -------
+        Stream
+
+        >>> Stream.range(5).pmap(str).to_list()
+        ['0', '1', '2', '3', '4']
+        >>> def add_one(v): return v + 1
+        >>> Stream.range(10).pmap(add_one).to_list()
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        '''
+        if processes is None:
+            processes = os.cpu_count()
+        pool_chunk_size = max(chunk_size // processes, 1)
+
+        def gen():
+            it = iter(self)
+            with mp.Pool(processes=processes) as pool:
+                while True:
+                    data = list(itt.islice(it, chunk_size))
+                    if not data:
+                        break
+                    yield from pool.imap(f, data, pool_chunk_size)
+        return Stream(iter(gen()))
