@@ -5,7 +5,6 @@ import heapq
 import io
 import itertools as itt
 import multiprocessing as mp
-import os
 import reprlib
 from collections import Counter, defaultdict, deque
 from pathlib import Path
@@ -1412,6 +1411,7 @@ class Stream(Monad):
                                   for idx, elem in enumerate(self))
         return start + elems_str + end
 
+    @as_stream
     def pmap(self, f, *, processes=None, chunk_size=1024):
         '''Parallel map of streaming data
 
@@ -1423,8 +1423,7 @@ class Stream(Monad):
             the number of workers. If None is given, default to number
             of machine cores
         chunk_size : int
-            size of data chunks. The data will be chunked to the size given
-            before feeding to workers
+            size of data chunks. See multiprocess.Pool.imap for detail
 
         Returns
         -------
@@ -1436,16 +1435,7 @@ class Stream(Monad):
         >>> Stream.range(10).pmap(add_one).to_list()
         [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
         '''
-        if processes is None:
-            processes = os.cpu_count()
-        pool_chunk_size = max(chunk_size // processes, 1)
-
-        def gen():
-            it = iter(self)
+        def trfmr(self_):
             with mp.Pool(processes=processes) as pool:
-                while True:
-                    data = list(itt.islice(it, chunk_size))
-                    if not data:
-                        break
-                    yield from pool.imap(f, data, pool_chunk_size)
-        return Stream(iter(gen()))
+                yield from pool.imap(f, self_, chunk_size)
+        return trfmr
