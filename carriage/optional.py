@@ -195,26 +195,29 @@ class Optional(Monad):
         return wrapper
 
     @classmethod
-    def exceptable(cls, f_or_error, *more_errors):
+    def exceptable(cls, f_or_error, *more_errors, handler=None):
+        if handler is None:
+            handler = lambda err: None # do nothing
         if inspect.isclass(f_or_error) and issubclass(f_or_error, Exception):
             errors = (f_or_error,) + tuple(more_errors)
 
             def deco(f):
-                return cls._wrap_exceptable(f, errors)
+                return cls._wrap_exceptable(f, errors, handler)
 
             return deco
         if callable(f_or_error):
             f = f_or_error
             errors = Exception
-            return cls._wrap_exceptable(f, errors)
+            return cls._wrap_exceptable(f, errors, handler)
 
     @classmethod
-    def _wrap_exceptable(cls, f, errors):
+    def _wrap_exceptable(cls, f, errors, handler):
         @wraps(f)
         def wrapper(*args, **kwargs):
             try:
                 res = f(*args, **kwargs)
-            except errors:
+            except errors as err:
+                handler(err)
                 return Nothing
             else:
                 return Some(res)
