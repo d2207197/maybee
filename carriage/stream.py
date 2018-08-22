@@ -2,11 +2,13 @@
 import builtins
 import functools as fnt
 import heapq
+import io
 import itertools as itt
-import reprlib
-from collections import Counter, defaultdict, deque
 import multiprocessing as mp
 import os
+import reprlib
+from collections import Counter, defaultdict, deque
+from pathlib import Path
 
 from tabulate import tabulate, tabulate_formats
 
@@ -211,6 +213,49 @@ class Stream(Monad):
                 yield x
                 x = func(x)
         return cls(iterate_gen(x))
+
+    @classmethod
+    def read_txt(cls, path):
+        '''Create from a text file.
+        Treat lines as elements and remove newline character.
+
+        >>> Stream.read_txt(path) # doctest: +SKIP
+
+        Parameters
+        ----------
+        path : str or path or file object
+            path to the input file
+        '''
+        if isinstance(path, io.TextIOBase):
+            f = path
+        else:
+            f = Path(path).open('rt')
+
+        return Stream(f).map(lambda line: line.strip('\n'))
+
+    def write_txt(self, path, sep='\n'):
+        '''Write into a text file.
+
+        All elements will be applied ``str()`` before write to the file.
+
+        >>> Stream.range(10).write_txt('nums.txt')
+
+        Parameters
+        ----------
+        path : str or path or file object
+            path to the input file
+        sep : str
+            element separator. defaults to '\n'
+        '''
+        if isinstance(path, io.TextIOBase):
+            f = path
+            self._write_txt_file(f, sep)
+        else:
+            with Path(path).open('wt') as f:
+                self._write_txt_file(f, sep)
+
+    def _write_txt_file(self, f, sep='\n'):
+        self.for_each(lambda line: f.write(str(line) + sep))
 
     @property
     def _base_type(self):
@@ -912,6 +957,27 @@ class Stream(Monad):
         return fnt.partial(itt.filterfalse, pred)
 
     @as_stream
+    def unique(self, key_func=None):
+        '''Create a new Stream of unique elements
+
+        >>> Stream.range(10).unique(lambda x: x // 3).to_list()
+        [0, 3, 6, 9]
+
+        '''
+        if key_func is None:
+            def key_func(x): return x
+
+        def unique_tr(iterable):
+            visited_keys = set()
+            for item in iterable:
+                key = key_func(item)
+                if key not in visited_keys:
+                    visited_keys.add(key)
+                    yield item
+
+        return unique_tr
+
+    @as_stream
     def interpose(self, sep):
         '''Create a new Stream by interposing separater between elemens.
 
@@ -933,17 +999,17 @@ class Stream(Monad):
         '''Create a new Stream by zipping elements with other iterables.
 
         >>> Stream.range(5, 8).zip([1,2,3]).to_list()
-        [Row(v0=5, v1=1), Row(v0=6, v1=2), Row(v0=7, v1=3)]
+        [Row(f0=5, f1=1), Row(f0=6, f1=2), Row(f0=7, f1=3)]
 
         >>> Stream.range(5, 8).zip([1,2,3], [9, 10, 11]).to_list()
-        [Row(v0=5, v1=1, v2=9), Row(v0=6, v1=2, v2=10), Row(v0=7, v1=3, v2=11)]
+        [Row(f0=5, f1=1, f2=9), Row(f0=6, f1=2, f2=10), Row(f0=7, f1=3, f2=11)]
 
         >>> Stream.range(5, 8).zip([1,2]).to_list()
-        [Row(v0=5, v1=1), Row(v0=6, v1=2)]
+        [Row(f0=5, f1=1), Row(f0=6, f1=2)]
 
         >>> import itertools as itt
         >>> Stream.range(5, 8).zip(itt.count(10)).to_list()
-        [Row(v0=5, v1=10), Row(v0=6, v1=11), Row(v0=7, v1=12)]
+        [Row(f0=5, f1=10), Row(f0=6, f1=11), Row(f0=7, f1=12)]
         '''
         from carriage import Row
 
@@ -958,10 +1024,10 @@ class Stream(Monad):
         as long as possible.
 
         >>> Stream.range(5, 8).zip_longest([1,2]).to_list()
-        [Row(v0=5, v1=1), Row(v0=6, v1=2), Row(v0=7, v1=None)]
+        [Row(f0=5, f1=1), Row(f0=6, f1=2), Row(f0=7, f1=None)]
 
         >>> Stream.range(5, 8).zip_longest([1,2], fillvalue=0).to_list()
-        [Row(v0=5, v1=1), Row(v0=6, v1=2), Row(v0=7, v1=0)]
+        [Row(f0=5, f1=1), Row(f0=6, f1=2), Row(f0=7, f1=0)]
 
         '''
         from carriage import Row
@@ -1195,16 +1261,22 @@ class Stream(Monad):
         return self.extended((elem,))
 
     @as_stream
-    def distincted(self):
+    def distincted(self, key_func=None):
         '''Create a new Stream with non-repeating elements. And elements are
         with the same order of first occurence in the source Stream.
 
+        >>> Stream.range(10).distincted(lambda n: n//3).to_list()
+        [0, 3, 6, 9]
         '''
+        if key_func is None:
+            def key_func(x): return x
+
         def distincted_tr(items):
-            item_set = set()
+            key_set = set()
             for item in items:
-                if item not in item_set:
-                    item_set.add(item)
+                key_value = key_func(item)
+                if key_value not in key_set:
+                    key_set.add(key_value)
                     yield item
 
         return distincted_tr
@@ -1282,9 +1354,9 @@ class Stream(Monad):
 
         >>> s = Stream.range(5)
         >>> s.chunk(2).to_list()
-        [Row(v0=0, v1=1), Row(v0=2, v1=3), Row(v0=4)]
+        [Row(f0=0, f1=1), Row(f0=2, f1=3), Row(f0=4)]
         >>> s.chunk(2, strict=True).to_list()
-        [Row(v0=0, v1=1), Row(v0=2, v1=3)]
+        [Row(f0=0, f1=1), Row(f0=2, f1=3)]
         '''
         from .row import Row
 

@@ -18,7 +18,7 @@ class Row(tuple):
     If you are too lazy to name the fields.
 
     >>> Row.from_values([1, 'a', 9])
-    Row(v0=1, v1='a', v2=9)
+    Row(f0=1, f1='a', f2=9)
 
     You can access field using index or field name in ``O(1)``.
 
@@ -57,13 +57,13 @@ class Row(tuple):
         '''Create Row from values
 
         >>> Row.from_values([1, 2, 3])
-        Row(v0=1, v1=2, v2=3)
+        Row(f0=1, f1=2, f2=3)
         >>> Row.from_values([1, 2, 3], fields=['x', 'y', 'z'])
         Row(x=1, y=2, z=3)
 
         '''
         if fields is None:
-            return cls(**{f'v{i}': v for i, v in enumerate(values)})
+            return cls(**{f'f{i}': v for i, v in enumerate(values)})
         else:
             return cls(**{f: v for f, v in zip(fields, values)})
 
@@ -91,6 +91,9 @@ class Row(tuple):
 
         return row
 
+    def __getnewargs_ex__(self):
+        return ((), self._dict)
+
     def __getattribute__(self, name):
         if name in tuple.__getattribute__(self, '_dict'):
             # Accessing Row fields has higher priority
@@ -99,17 +102,65 @@ class Row(tuple):
         else:
             return tuple.__getattribute__(self, name)
 
-    def __setattr__(self, name, value):
-        if name != '_dict':
-            raise TypeError("'Row' object does not support item assignment")
-        else:
-            super().__setattr__(name, value)
-
     # def __getattr__(self, name):
     #     if name in self._dict:
     #         return self._dict[name]
     #     else:
     #         raise AttributeError(f'{self!r} has no attribute {name!r}')
+
+    def get_opt(self, field):
+        '''Get field in Optional type
+
+        >>> from carriage.optional import Some, Nothing
+        >>> Row(x=3, y=4).get_opt('x')
+        Some(3)
+        >>> Row(x=3, y=4).get_opt('z')
+        Nothing
+
+        Parameters
+        ----------
+        field : str
+            field name
+
+        Returns
+        -------
+        Just(value) if field exist
+        Nothing if field doesn't exist
+
+        '''
+        from .optional import Some, Nothing
+        if field in self._dict:
+            return Some(getattr(self, field))
+
+        return Nothing
+
+    def get(self, field, fillvalue=None):
+        '''Get field
+
+        >>> Row(x=3, y=4).get('x')
+        3
+        >>> Row(x=3, y=4).get('z', 0)
+        0
+        '''
+        if field in self._dict:
+            return getattr(self, field)
+
+        return fillvalue
+
+    def has_field(self, field):
+        '''Has field
+
+        >>> Row(x=3, y=4).has_field('x')
+        True
+
+        '''
+        return field in self._dict
+
+    def __setattr__(self, name, value):
+        if name != '_dict':
+            raise TypeError("'Row' object does not support item assignment")
+        else:
+            super().__setattr__(name, value)
 
     def fields(self):
         return self._dict.keys()

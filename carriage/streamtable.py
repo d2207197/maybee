@@ -1,5 +1,8 @@
 import functools as fnt
+import io
 import itertools as itt
+import json
+from pathlib import Path
 
 from tabulate import tabulate, tabulate_formats
 
@@ -176,6 +179,61 @@ class StreamTable(Stream):
         stm = Stream(tuples).tuple_as_row(fields=fields)
         return cls(stm)
 
+    @classmethod
+    def read_jsonl(cls, path):
+        '''Create from a jsonlines file
+
+        >>> StreamTable.read_jsonl('person.jsonl') # doctest: +SKIP
+        |   name |   age |
+        |--------+-------|
+        |   john |    18 |
+        |   jane |    26 |
+
+        Parameters
+        ----------
+        path : str or path or file object
+            path to the input file
+
+        '''
+        from carriage import Row
+
+        if isinstance(path, io.TextIOBase):
+            f = path
+        else:
+            f = Path(path).open('rt')
+
+        stm = (Stream(f)
+               .map(json.loads)  # dicts
+               .map(Row.from_dict)
+               )
+        return cls(stm)
+
+    def write_jsonl(self, path):
+        '''Write into file in the format of jsonlines
+
+        >>> stb.write_jsonl('person.jsonl') # doctest: +SKIP
+
+        Parameters
+        ----------
+        path : str or path or file object
+            path to the input file
+
+        '''
+        if isinstance(path, io.TextIOBase):
+            f = path
+            self._write_jsonl_file(f)
+        else:
+            with Path(path).open('wt') as f:
+                self._write_jsonl_file(f)
+
+    def _write_jsonl_file(self, f):
+        (
+            self
+            .map(Row.to_dict)
+            .map(json.dumps)
+            .for_each(lambda line: f.write(line + '\n'))
+        )
+
     def to_dataframe(self):
         '''Convert to Pandas DataFrame
 
@@ -200,18 +258,22 @@ class StreamTable(Stream):
     def to_dicts(self):
         return self.map(lambda row: row.to_dict()).to_list()
 
-    def show(self, n=10, tablefmt='orgtbl'):
+    def show(self, n=10):
         '''print rows
 
         Parameters
         ----------
         n : int
             number of rows to show
-        tablefmt : str
-            output table format.
-            all possible format strings are in `tabulate.tabulate_formats`
         '''
-        print(self.tabulate(n=n, tablefmt=tablefmt))
+        try:
+            from IPython.display import display
+            display_func = display
+        except ImportError:
+            display_func = print
+
+        showing_obj = _StreamTableShowing(self, n)
+        display_func(showing_obj)
 
     def tabulate(self, n=10, tablefmt='orgtbl'):
         '''return tabulate formatted string
@@ -232,9 +294,33 @@ class StreamTable(Stream):
             tablefmt=tablefmt)
 
     @as_stream
+    def map_fields(self, **field_funcs):
+        '''Add or replace fields by applying each row to function
+
+        >>> from carriage import Row, X
+        >>> st = StreamTable([Row(x=3, y=4), Row(x=-1, y=2)])
+        >>> st.map_fields(z=X.x + X.y).to_list()
+        [Row(x=3, y=4, z=7), Row(x=-1, y=2, z=1)]
+
+        Parameters
+        ----------
+        **field_funcs : Map[field_name, Function]
+            Each function will be evaluated with the current row as the only argument, and the return value will be the new value of the field.
+
+        Returns
+        -------
+        StreamTable
+        '''
+
+        return fnt.partial(
+            map,
+            lambda row:
+            row.evolve(**{field: func(row)
+                          for field, func in field_funcs.items()}))
+
+    @as_stream
     def select(self, *fields, **field_funcs):
-        '''Assume elements in Stream is in Row type and
-        create a new Stream by keeping only specified fields in each Row
+        '''Keep only specified fields, and add/replace fields.
 
         >>> from carriage import Row, X
         >>> st = StreamTable([Row(x=3, y=4), Row(x=-1, y=2)])
@@ -259,6 +345,30 @@ class StreamTable(Stream):
             row.evolve(**{field: func(row) if callable(func) else func
                           for field, func in field_funcs.items()})
             .project(*fields, *field_funcs.keys()))
+
+    @as_stream
+    def explode(self, field):
+        '''Expand each row into multiple rows for each element in the field
+
+        >>> stb = StreamTable([Row(name='a', nums=[1,3,4]), Row(name='b', nums=[2, 1])])
+        >>> stb.explode('nums').show()
+        | name   |   nums |
+        |--------+--------|
+        | a      |      1 |
+        | a      |      3 |
+        | a      |      4 |
+        | b      |      2 |
+        | b      |      1 |
+        '''
+        def _explode_row(row):
+            for field_elem in getattr(row, field):
+                yield row.evolve(**{field: field_elem})
+
+        def _flatmap_explodes(rows_iter):
+            for row in rows_iter:
+                yield from _explode_row(row)
+
+        return _flatmap_explodes
 
     @as_stream
     def where(self, *conds, **kwconds):
@@ -300,8 +410,21 @@ class StreamTable(Stream):
     def _repr_html_(self):
         return self.tabulate(tablefmt='html')
 
-    def _repr_str_(self):
+    def __str__(self):
         return self.tabulate(tablefmt='orgtbl')
+
+
+class _StreamTableShowing():
+
+    def __init__(self, streamtable, n):
+        self.streamtable = streamtable
+        self.n = n
+
+    def _repr_html_(self):
+        return self.streamtable.tabulate(n=self.n, tablefmt='html')
+
+    def __repr__(self):
+        return self.streamtable.tabulate(n=self.n, tablefmt='orgtbl')
 
 
 StreamTable.tabulate.tablefmts = tabulate_formats
