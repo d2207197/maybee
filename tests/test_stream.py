@@ -285,3 +285,19 @@ def test_tuple_as_row():
     strm = Stream([(1, 2), (3, 4)])
     rows = strm.tuple_as_row(['x', 'y']).to_list()
     assert rows == [Row(x=1, y=2), Row(x=3, y=4)]
+
+
+class TestPmap(object):
+    def add_one(self, value):
+        return value + 1
+
+    def test_add_one(self):
+        strm = Stream.range(30)
+        res = strm.pmap(self.add_one, processes=4, chunk_size=3)
+        for i, v in zip(strm, res):
+            assert v - i == 1
+
+    def test_empty(self):
+        strm = Stream([])
+        res = strm.pmap(self.add_one).to_list()
+        assert res == []

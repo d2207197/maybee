@@ -4,6 +4,7 @@ import functools as fnt
 import heapq
 import io
 import itertools as itt
+import multiprocessing as mp
 import reprlib
 from collections import Counter, defaultdict, deque
 from pathlib import Path
@@ -1413,3 +1414,32 @@ class Stream(Monad):
         elems_str = elem_sep.join(elem_format.format(index=idx, elem=elem)
                                   for idx, elem in enumerate(self))
         return start + elems_str + end
+
+    @as_stream
+    def pmap(self, f, *, processes=None, chunk_size=1024):
+        '''Parallel map of streaming data
+
+        Parameters
+        ----------
+        f : callable
+            A *picklable* callable object (lambda is not allowed)
+        processes : int
+            the number of workers. If None is given, default to number
+            of machine cores
+        chunk_size : int
+            size of data chunks. See multiprocess.Pool.imap for detail
+
+        Returns
+        -------
+        Stream
+
+        >>> Stream.range(5).pmap(str).to_list()
+        ['0', '1', '2', '3', '4']
+        >>> def add_one(v): return v + 1
+        >>> Stream.range(10).pmap(add_one).to_list()
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        '''
+        def trfmr(self_):
+            with mp.Pool(processes=processes) as pool:
+                yield from pool.imap(f, self_, chunk_size)
+        return trfmr
